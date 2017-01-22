@@ -1,26 +1,27 @@
 /**
- *   nextCloud Android client application
+ * nextCloud Android client application
  *
- *   @author Bartosz Przybylski
- *   Copyright (C) 2016  Bartosz Przybylski <bart.p.pl@gmail.com>
- *
- *   This program is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License version 2,
- *   as published by the Free Software Foundation.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * @author Bartosz Przybylski
+ * Copyright (C) 2016  Bartosz Przybylski <bart.p.pl@gmail.com>
+ * <p>
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ * <p>
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * <p>
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package org.nextcloud.providers;
 
 import android.accounts.Account;
+import android.accounts.AuthenticatorException;
+import android.accounts.OperationCanceledException;
 import android.annotation.TargetApi;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -30,6 +31,7 @@ import android.graphics.Point;
 import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
@@ -41,6 +43,13 @@ import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.files.services.FileDownloader;
 import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.lib.common.OwnCloudAccount;
+import com.owncloud.android.lib.common.OwnCloudClient;
+import com.owncloud.android.lib.common.OwnCloudClientManagerFactory;
+import com.owncloud.android.lib.common.operations.OnRemoteOperationListener;
+import com.owncloud.android.lib.common.operations.RemoteOperation;
+import com.owncloud.android.lib.common.operations.RemoteOperationResult;
+import com.owncloud.android.operations.CreateFolderOperation;
 
 import org.nextcloud.providers.cursors.FileCursor;
 import org.nextcloud.providers.cursors.RootCursor;
@@ -168,26 +177,58 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         initiateStorageMap();
         updateStorageManagerFromDocId(parentId);
         OCFile parent = mCurrentStorageManager.getFileById(parentId);
-        if (!parent.isDown()) {
-            if (!downloadSuccessful(parentId, null)) {
-                return null;
+
+        if (mimeType.equals("vnd.android.document/directory")) {
+            String folderPath = parent.getRemotePath()
+                    //+ OCFile.PATH_SEPARATOR
+                    + displayName;
+            final boolean[] folderCreated = {false};
+            try {
+                Looper.prepare();
+                new CreateFolderOperation(folderPath, true)
+                        .execute(
+                                OwnCloudClientManagerFactory.getDefaultSingleton()
+                                        .getClientFor(new OwnCloudAccount(mCurrentStorageManager.getAccount(), getContext()), getContext()),
+                                mCurrentStorageManager,
+                                new OnRemoteOperationListener() {
+                                    @Override
+                                    public void onRemoteOperationFinish(RemoteOperation remoteOperation, RemoteOperationResult remoteOperationResult) {
+                                        folderCreated[0] = remoteOperationResult.isSuccess();
+                                    }
+                                }, new Handler());
+            } catch (com.owncloud.android.lib.common.accounts.AccountUtils.AccountNotFoundException
+                    | AuthenticatorException
+                    | OperationCanceledException
+                    | IOException e) {
+                e.printStackTrace();
             }
+            while (!folderCreated[0]) {
+                waitOrGetCancelled(null);
+            }
+            return "" + mCurrentStorageManager.getFileByPath(folderPath).getFileId();
+        } else {
+
+            if (!parent.isDown()) {
+                if (!downloadSuccessful(parentId, null)) {
+                    return null;
+                }
+            }
+            File file = new File(parent.getStoragePath().concat(File.pathSeparator).concat(displayName));
+            try {
+                file.createNewFile();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            new FileUploader.UploadRequester().uploadNewFile(getContext(),
+                    mCurrentStorageManager.getAccount(),
+                    file.getPath(),
+                    parent.getRemotePath().concat(OCFile.PATH_SEPARATOR).concat(displayName),
+                    FileUploader.LOCAL_BEHAVIOUR_DELETE,
+                    mimeType,
+                    true,
+                    0); // TODO: 1/20/17 Set createdBy correctly
+            return "" + mCurrentStorageManager.getFileByLocalPath(file.getPath()).getFileId();
         }
-        File file = new File(parent.getStoragePath().concat(File.pathSeparator).concat(displayName));
-        try {
-            file.createNewFile();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        new FileUploader.UploadRequester().uploadNewFile(getContext(),
-                mCurrentStorageManager.getAccount(),
-                file.getPath(),
-                parent.getRemotePath().concat(OCFile.PATH_SEPARATOR).concat(displayName),
-                FileUploader.LOCAL_BEHAVIOUR_DELETE,
-                mimeType,
-                true,
-                0); // TODO: 1/20/17 Set createdBy correctly
-        return "" + mCurrentStorageManager.getFileByLocalPath(file.getPath()).getFileId();
     }
 
     private boolean downloadSuccessful(long docId, @Nullable CancellationSignal signal) {
