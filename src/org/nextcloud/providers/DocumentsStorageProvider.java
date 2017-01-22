@@ -20,8 +20,6 @@
 package org.nextcloud.providers;
 
 import android.accounts.Account;
-import android.accounts.AuthenticatorException;
-import android.accounts.OperationCanceledException;
 import android.annotation.TargetApi;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -43,12 +41,6 @@ import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.files.services.FileDownloader;
 import com.owncloud.android.files.services.FileUploader;
-import com.owncloud.android.lib.common.OwnCloudAccount;
-import com.owncloud.android.lib.common.OwnCloudClient;
-import com.owncloud.android.lib.common.OwnCloudClientManagerFactory;
-import com.owncloud.android.lib.common.operations.OnRemoteOperationListener;
-import com.owncloud.android.lib.common.operations.RemoteOperation;
-import com.owncloud.android.lib.common.operations.RemoteOperationResult;
 import com.owncloud.android.operations.CreateFolderOperation;
 
 import org.nextcloud.providers.cursors.FileCursor;
@@ -64,7 +56,7 @@ import java.util.Vector;
 @TargetApi(Build.VERSION_CODES.KITKAT)
 public class DocumentsStorageProvider extends DocumentsProvider {
 
-    private static final String TAG = "Nextcloud DocProvider";
+    private static final String TAG = "DocProvider";
     private FileDataStorageManager mCurrentStorageManager = null;
     private static Map<Long, FileDataStorageManager> mRootIdToStorageManager;
 
@@ -79,6 +71,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         if (childDocuments == null) return false;
         int columnId = childDocuments.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
         boolean notFound = true;
+        childDocuments.moveToFirst();
         while (notFound) {
             if (childDocuments.getString(columnId).equals(documentId)) notFound = false;
             if (!childDocuments.moveToNext()) break;
@@ -180,34 +173,13 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         if (mimeType.equals("vnd.android.document/directory")) {
             String folderPath = parent.getRemotePath()
-                    //+ OCFile.PATH_SEPARATOR
+                    + OCFile.PATH_SEPARATOR
                     + displayName;
-            final boolean[] folderCreated = {false};
-            try {
-                Looper.prepare();
-                new CreateFolderOperation(folderPath, true)
-                        .execute(
-                                OwnCloudClientManagerFactory.getDefaultSingleton()
-                                        .getClientFor(new OwnCloudAccount(mCurrentStorageManager.getAccount(), getContext()), getContext()),
-                                mCurrentStorageManager,
-                                new OnRemoteOperationListener() {
-                                    @Override
-                                    public void onRemoteOperationFinish(RemoteOperation remoteOperation, RemoteOperationResult remoteOperationResult) {
-                                        folderCreated[0] = remoteOperationResult.isSuccess();
-                                    }
-                                }, new Handler());
-            } catch (com.owncloud.android.lib.common.accounts.AccountUtils.AccountNotFoundException
-                    | AuthenticatorException
-                    | OperationCanceledException
-                    | IOException e) {
-                e.printStackTrace();
-            }
-            while (!folderCreated[0]) {
-                waitOrGetCancelled(null);
-            }
+            folderPath = folderPath.replace("//", "/");
+            new CreateFolderOperation(folderPath, true)
+                    .execute(mCurrentStorageManager, getContext());
             return "" + mCurrentStorageManager.getFileByPath(folderPath).getFileId();
         } else {
-
             if (!parent.isDown()) {
                 if (!downloadSuccessful(parentId, null)) {
                     return null;
