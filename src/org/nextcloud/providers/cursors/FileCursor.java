@@ -51,12 +51,15 @@ public class FileCursor extends MatrixCursor {
         final String imagePath = MimeTypeUtil.isImage(file) && file.isDown() ? file.getStoragePath() : null;
         int flags = imagePath != null ? Document.FLAG_SUPPORTS_THUMBNAIL : 0;
 
-        newRow().add(Document.COLUMN_DOCUMENT_ID, Long.toString(file.getFileId()))
+        RowBuilder row = newRow().add(Document.COLUMN_DOCUMENT_ID, Long.toString(file.getFileId()))
                 .add(Document.COLUMN_DISPLAY_NAME, file.getFileName())
                 .add(Document.COLUMN_LAST_MODIFIED, file.getModificationTimestamp())
                 .add(Document.COLUMN_SIZE, file.getFileLength())
                 .add(Document.COLUMN_FLAGS, flags)
                 .add(Document.COLUMN_ICON, iconRes)
                 .add(Document.COLUMN_MIME_TYPE, mimeType);
+        if (file.isFolder()) {
+            row.add(Document.COLUMN_FLAGS, Document.FLAG_DIR_SUPPORTS_CREATE);
+        }
     }
 }
